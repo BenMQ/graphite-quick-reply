@@ -82,8 +82,12 @@
       cursor: pointer;
       font-size: 13px;
     }
-    .add-row button:hover {
+    .add-row button:hover:not(:disabled) {
       background: #4a4a4a;
+    }
+    .add-row button:disabled {
+      opacity: 0.4;
+      cursor: default;
     }
     .option {
       display: flex;
@@ -99,11 +103,11 @@
   <h3>Quick Reply Labels</h3>
   <ul class="label-list" id="label-list"></ul>
   <div class="add-row">
-    <input type="text" id="new-label" placeholder="New label..." />
+    <input type="text" id="new-label" placeholder="New label..." maxlength="50" />
     <button id="add-btn">Add</button>
   </div>
   <div class="option">
-    <input type="checkbox" id="auto-resolve" checked />
+    <input type="checkbox" id="auto-resolve" />
     <label for="auto-resolve">Auto-submit and resolve thread</label>
   </div>
   <script src="popup.js"></script>

@@ -1,4 +1,4 @@
-const DEFAULTS = { labels: ["Fixed", "Reverted", "Stale AI comment"], autoResolve: true };
+const DEFAULTS = { labels: ["Done", "Acknowledged", "Duplicate comment"], autoResolve: false };
 
 const listEl = document.getElementById("label-list");
 const inputEl = document.getElementById("new-label");
@@ -31,6 +31,7 @@ function render(labels) {
       labels.splice(i, 1);
       chrome.storage.sync.set({ labels });
       render(labels);
+      updateAddButton(labels);
     });
 
     li.addEventListener("dragstart", (e) => {
@@ -72,16 +73,28 @@ function render(labels) {
 
 chrome.storage.sync.get(DEFAULTS, (result) => {
   render(result.labels);
+  updateAddButton(result.labels);
   autoResolveEl.checked = result.autoResolve;
 });
 
+const MAX_LABELS = 20;
+const MAX_LABEL_LENGTH = 50;
+
+function updateAddButton(labels) {
+  const atLimit = labels.length >= MAX_LABELS;
+  addBtn.disabled = atLimit;
+  addBtn.title = atLimit ? `Maximum ${MAX_LABELS} labels` : "";
+}
+
 addBtn.addEventListener("click", () => {
-  const text = inputEl.value.trim();
+  const text = inputEl.value.trim().substring(0, MAX_LABEL_LENGTH);
   if (!text) return;
   chrome.storage.sync.get(DEFAULTS, (result) => {
+    if (result.labels.length >= MAX_LABELS) return;
     result.labels.push(text);
     chrome.storage.sync.set({ labels: result.labels });
     render(result.labels);
+    updateAddButton(result.labels);
     inputEl.value = "";
   });
 });

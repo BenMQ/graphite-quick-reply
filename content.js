@@ -19,6 +19,7 @@
   }
 
   chrome.storage.onChanged.addListener((changes) => {
+    if (!changes.labels && !changes.autoResolve) return;
     if (changes.labels) settings.labels = changes.labels.newValue;
     if (changes.autoResolve) settings.autoResolve = changes.autoResolve.newValue;
     reinjectAll();
@@ -29,8 +30,10 @@
   // Called on settings change and initial load.
 
   function reinjectAll() {
+    // Remove button rows and tear down event listeners before re-injecting
     document.querySelectorAll(".gqr-buttons").forEach((el) => el.remove());
     document.querySelectorAll('[data-gqr-injected="true"]').forEach((el) => {
+      if (el._gqrCleanup) el._gqrCleanup();
       el.removeAttribute("data-gqr-injected");
     });
     document.querySelectorAll('[class*="ThreadReply_threadReply__"]').forEach(injectButtons);
@@ -116,14 +119,12 @@
 
     const checkboxContainer = threadReply.querySelector('[class*="Checkbox_gdsCheckbox__"]');
     const checkbox = checkboxContainer?.querySelector('input[type="checkbox"]');
-    console.log(TAG, "checkbox", { found: !!checkboxContainer, checked: checkbox?.checked });
 
     if (!checkboxContainer) {
       warn("Add to review checkbox not found in ThreadReply");
     } else if (checkbox?.checked) {
       const label = checkboxContainer.querySelector("label");
       simulateClick(label || checkboxContainer);
-      console.log(TAG, "checkbox after uncheck", checkbox.checked);
     }
 
     // Submit button is a sibling of the checkbox's flex group, inside
@@ -131,22 +132,17 @@
     const checkboxGroup = checkboxContainer?.closest('[class*="utilities_flexAlignCenter__"]');
     const submitGroup = checkboxGroup?.parentElement;
     const submitBtn = submitGroup?.querySelector(':scope > button');
-    console.log(TAG, "submit", { found: !!submitBtn, disabled: submitBtn?.disabled, groupFound: !!submitGroup });
 
     if (!submitBtn) {
       warn("submit button not found");
       return;
     }
 
-    const textarea = threadReply.querySelector('textarea[placeholder="Reply"]');
-    console.log(TAG, "textarea value before submit", JSON.stringify(textarea?.value));
-
     simulateClick(submitBtn);
 
     // Resolve the thread after submission completes
     setTimeout(() => {
       const resolveBtn = findResolveButton(threadReply);
-      console.log(TAG, "resolve", { found: !!resolveBtn });
       if (resolveBtn) {
         simulateClick(resolveBtn);
       } else {
@@ -208,26 +204,53 @@
     // On match: focus the textarea first (activates the collapsed
     // editor), wait a tick for React to expand it, then fill.
 
-    function handleGqrClick(e) {
-      const directBtn = e.target.closest('.gqr-btn');
-      let matchedLabel = directBtn?.dataset.gqrLabel;
+    // Guard against double-fire: pointerdown sets a flag, click checks it.
+    // We need both events because pointerdown alone doesn't prevent the
+    // ThreadReply's own click handler from activating the editor.
+    let handledByPointerDown = false;
 
-      if (!matchedLabel) {
+    function handleGqrPointerDown(e) {
+      const label = matchLabel(e);
+      if (!label) return;
+      handledByPointerDown = true;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      triggerFill(threadReply, label);
+    }
+
+    function handleGqrClick(e) {
+      if (handledByPointerDown) {
+        handledByPointerDown = false;
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        return;
+      }
+      const label = matchLabel(e);
+      if (!label) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      triggerFill(threadReply, label);
+    }
+
+    function matchLabel(e) {
+      const directBtn = e.target.closest('.gqr-btn');
+      let label = directBtn?.dataset.gqrLabel;
+      if (!label) {
         for (const b of row.querySelectorAll('.gqr-btn')) {
           const r = b.getBoundingClientRect();
           if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
-            matchedLabel = b.dataset.gqrLabel;
+            label = b.dataset.gqrLabel;
             break;
           }
         }
       }
+      return label;
+    }
 
-      if (!matchedLabel) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-
+    function triggerFill(threadReply, matchedLabel) {
       const textarea = threadReply.querySelector('textarea[placeholder="Reply"]');
       if (!textarea) {
         warn("textarea[placeholder=Reply] not found on button click");
@@ -238,15 +261,22 @@
         const fresh = threadReply.querySelector('textarea[placeholder="Reply"]');
         if (fresh) {
           fillTextarea(fresh, matchedLabel);
-          // Auto-submit and resolve after letting React process the value change
           setTimeout(() => autoSubmitAndResolve(threadReply), 300);
         } else {
           warn("textarea disappeared after focus");
         }
       }, 100);
     }
-    threadReply.addEventListener("pointerdown", handleGqrClick, true);
+
+    threadReply.addEventListener("pointerdown", handleGqrPointerDown, true);
     threadReply.addEventListener("click", handleGqrClick, true);
+
+    // Store cleanup so reinjectAll can remove these listeners
+    threadReply._gqrCleanup = () => {
+      threadReply.removeEventListener("pointerdown", handleGqrPointerDown, true);
+      threadReply.removeEventListener("click", handleGqrClick, true);
+      delete threadReply._gqrCleanup;
+    };
 
     composer.insertAdjacentElement("afterend", row);
     threadReply.setAttribute("data-gqr-injected", "true");
